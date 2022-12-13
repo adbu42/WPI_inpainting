@@ -13,8 +13,7 @@ from torchvision.utils import save_image
 
 
 def wrapper_gmask(args):
-    mask_global = torch.ByteTensor(1, 1, \
-                                        args.imgSize, args.imgSize)
+    mask_global = torch.ByteTensor(1, 1, args.imgSize, args.imgSize)
 
     res = args.res  # the lower it is, the more continuous the output will be. 0.01 is too small and 0.1 is too large
     density = args.density
@@ -74,12 +73,12 @@ if not os.path.exists(args.save_dir):
     os.makedirs(args.save_dir)
 
 for i in range(args.numbers):
-    mask = 1 - wrapper_gmask(args)
+    mask = wrapper_gmask(args)
     mask = mask.view(1, mask.size()[2], mask.size()[3])
     if (mask.sum() >= 61250):
         i -= 1
         continue
     else:
         print(i, mask.size(), mask.sum())
-        save_image(mask // 1, '{:s}/{:06d}.png'.format(args.save_dir, i))
+        save_image((mask // 1).type(torch.FloatTensor), '{:s}/{:06d}.png'.format(args.save_dir, i))
 

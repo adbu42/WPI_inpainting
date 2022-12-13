@@ -1,0 +1,6 @@
+checkpoint: 'weights/trans_u_net_max_recall.ckpt'
+config_path: 'stylegan2_trans_u_net_segmenter.yaml'
+patch_overlap: 0
+min_confidence: 0.3
+min_contour_area: 30
+

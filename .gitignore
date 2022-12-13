@@ -6,3 +6,5 @@ logs/
 *.jpg
 *.txt
 __pycache__/
+.idea/
+final_application/weights/

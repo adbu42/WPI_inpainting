@@ -47,6 +47,16 @@ savePath = args.savePath
 
 if not os.path.exists(savePath):
     os.makedirs(savePath)
+if not os.path.exists(savePath + '/damaged'):
+    os.makedirs(savePath + '/damaged')
+if not os.path.exists(savePath + '/masks'):
+    os.makedirs(savePath + '/masks')
+if not os.path.exists(savePath + '/ours'):
+    os.makedirs(savePath + '/ours')
+if not os.path.exists(savePath + '/GT'):
+    os.makedirs(savePath + '/GT')
+if not os.path.exists(savePath + '/input'):
+    os.makedirs(savePath + '/input')
 
 
 imgData = GetData(dataRoot, maskRoot, loadSize, cropSize)
@@ -83,7 +93,7 @@ for i in range(1, num_epochs + 1):
     netG.eval()
     if count >= 60:
         break
-    for inputImgs, GT, masks in (data_loader):
+    for inputImgs, GT, masks in data_loader:
         if count >= 60:
             break
         if cuda:
@@ -97,40 +107,35 @@ for i in range(1, num_epochs + 1):
         GT = GT.data.cpu()
         mask = masks.data.cpu()
         damaged = GT * mask
-        generaredImage = GT * mask + g_image * (1 - mask)
+        generatedImage = GT * mask + g_image * (1-mask)
         groundTruth = GT
-        masksT = mask
-        generaredImage = generaredImage
-        groundTruth = groundTruth
         count += 1
-        batch_mse = ((groundTruth - generaredImage) ** 2).mean()
+        batch_mse = ((groundTruth - generatedImage) ** 2).mean()
         psnr = 10 * math.log10(1 / batch_mse)
         sum_psnr += psnr
         print(count, ' psnr:', psnr)
-        ssim = pytorch_ssim.ssim(groundTruth * 255, generaredImage * 255)
+        ssim = pytorch_ssim.ssim(groundTruth * 255, generatedImage * 255)
         sum_ssim += ssim
         print(count, ' ssim:', ssim)
-        l1_loss += nn.L1Loss()(generaredImage, groundTruth)
+        l1_loss += nn.L1Loss()(generatedImage, groundTruth)
         
         outputs =torch.Tensor(4 * GT.size()[0], GT.size()[1], cropSize[0], cropSize[1])
         for i in range(GT.size()[0]):
-            outputs[4 * i] = masksT[i]
+            outputs[4 * i] = mask[i]
             outputs[4 * i + 1] = damaged[i]
-            #outputs[5 * i + 2] = GT[i] * masksT[i]
-            outputs[4 * i + 2] = generaredImage[i]
+            outputs[4 * i + 2] = generatedImage[i]
             outputs[4 * i + 3] = GT[i]
-            #outputs[5 * i + 4] = 1 - masksT[i]
         save_image(outputs,  os.path.join(savePath, 'results-{}'.format(count) + '.png'))
 
         # make subdirs to save mask GT results and input and damaged images
-        damaged = GT * mask + (1 -  mask)
+        damaged = GT * mask + (1-mask)
 
         for j in range(GT.size()[0]):
             save_image(outputs[4 * j + 1], savePath + '/damaged/damaged{}-{}.png'.format(count, j))
             outputs[4 * j + 1] = damaged[j]
 
         for j in range(GT.size()[0]):
-            outputs[4 * j] = 1- masksT[j]
+            outputs[4 * j] = mask[j]
             save_image(outputs[4 * j], savePath + '/masks/mask{}-{}.png'.format(count, j))
             save_image(outputs[4 * j + 1], savePath + '/input/input{}-{}.png'.format(count, j))
             save_image(outputs[4 * j + 2], savePath + '/ours/ours{}-{}.png'.format(count, j))
