@@ -1,17 +1,18 @@
 import json
 import math
 from pathlib import Path
-from typing import List, Union, Tuple, Iterator, NoReturn, Optional
+from typing import List, Tuple, Iterator, NoReturn, Optional
 
 import torch
 from PIL.Image import Image as ImageClass
 from torchvision import transforms
 from tqdm import tqdm
 
-from utils.config import load_config
-from utils.segmentation_utils import BBox
-from lightning_modules.lightning_module_selection import get_segmenter_class
-from lightning_modules.base_lightning import BaseSegmenter
+from synthesis_in_style_lightning.stylegan_code_finder.utils.config import load_config
+from synthesis_in_style_lightning.stylegan_code_finder.utils.segmentation_utils import BBox
+from synthesis_in_style_lightning.stylegan_code_finder.lightning_modules.lightning_module_selection import get_segmenter_class
+from synthesis_in_style_lightning.stylegan_code_finder.lightning_modules.base_lightning import BaseSegmenter
+
 
 class AnalysisSegmenter:
 
