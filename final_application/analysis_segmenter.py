@@ -1,22 +1,23 @@
 import json
 import math
 from pathlib import Path
-from typing import List, Tuple, Iterator, NoReturn, Optional
+from typing import List, Tuple, Iterator, NoReturn, Optional, Union
 
 import torch
 from PIL.Image import Image as ImageClass
 from torchvision import transforms
 from tqdm import tqdm
-
+import torch.nn.functional as torch_functional
 from synthesis_in_style_lightning.stylegan_code_finder.utils.config import load_config
 from synthesis_in_style_lightning.stylegan_code_finder.utils.segmentation_utils import BBox
 from synthesis_in_style_lightning.stylegan_code_finder.lightning_modules.lightning_module_selection import get_segmenter_class
 from synthesis_in_style_lightning.stylegan_code_finder.lightning_modules.base_lightning import BaseSegmenter
+from synthesis_in_style_lightning.stylegan_code_finder.visualization.utils import network_output_to_color_image
 
 
 class AnalysisSegmenter:
 
-    def __init__(self, model_checkpoint: str, device: str,
+    def __init__(self, model_checkpoint: str, device: str, class_to_color_map: Union[str, Path],
                  original_config_path: Optional[Path] = None, batch_size: Optional[int] = None,
                  max_image_size: int = None, print_progress: bool = True, patch_overlap: int = 0,
                  patch_overlap_factor: float = 0.0, show_confidence_in_segmentation: bool = False):
@@ -24,12 +25,13 @@ class AnalysisSegmenter:
         self.config['fine_tune'] = model_checkpoint
         self.device = device
         self.batch_size = batch_size if batch_size else self.config.get('batch_size', 1)
-        self.patch_size = int(self.config['image_size'])
+        self.patch_size = int(self.config['cutting_size'])
         self.print_progress = print_progress
         self.max_image_size = max_image_size
         self.show_confidence_in_segmentation = show_confidence_in_segmentation
         self.network = self.load_network()
         self.set_patch_overlap(patch_overlap, patch_overlap_factor)
+        self.class_to_color_map = self.load_color_map(class_to_color_map)
 
     def set_patch_overlap(self, patch_overlap: int, patch_overlap_factor: float) -> NoReturn:
         assert patch_overlap == 0 or patch_overlap_factor == 0.0, "Only one of 'patch_overlap' and " \
@@ -58,6 +60,12 @@ class AnalysisSegmenter:
             return tqdm(*args, **kwargs)
         else:
             return tuple(*args)
+
+    def load_color_map(self, color_map_file: Union[str, Path]) -> dict:
+        color_map_file = Path(color_map_file)
+        with color_map_file.open() as f:
+            color_map = json.load(f)
+        return color_map
 
     def load_network(self) -> BaseSegmenter:
         lightning_model = get_segmenter_class(self.config).load_from_checkpoint(self.config['fine_tune'])
@@ -114,13 +122,15 @@ class AnalysisSegmenter:
     def predict_patches(self, patches: Iterator[dict]) -> [dict]:
         predicted_patches = []
         for batch in self.progress_bar(patches, desc="Predicting patches...", leave=False):
+            batch_interpolated = torch_functional.interpolate(batch['images'], (self.config['image_size'], self.config['image_size']))
             with torch.no_grad():
-                prediction = self.network.predict(batch['images'])
-
+                prediction = self.network.predict(batch_interpolated)
+            prediction = torch_functional.interpolate(prediction, (self.patch_size, self.patch_size))
             for i, bbox in enumerate(batch['bboxes']):
                 predicted_patches.append({
                     "prediction": prediction[i],
-                    "bbox": bbox
+                    "bbox": bbox,
+                    "ground_truth": batch['images'][i]
                 })
 
         return predicted_patches
@@ -164,12 +174,18 @@ class AnalysisSegmenter:
             image.thumbnail((self.max_image_size, self.max_image_size))
 
         patches = self.crop_and_batch_patches(image)
-
         with torch.no_grad():
             predicted_patches = self.predict_patches(patches)
             # assembled_prediction = self.assemble_predictions(predicted_patches, image.size)
 
         return predicted_patches
+
+    def prediction_to_color_image(self, assembled_prediction: torch.tensor) -> ImageClass:
+        full_img_tensor = network_output_to_color_image(torch.unsqueeze(assembled_prediction, dim=0),
+                                                        self.class_to_color_map,
+                                                        show_confidence_in_segmentation=self.show_confidence_in_segmentation)
+        segmented_image = transforms.ToPILImage()(torch.squeeze(full_img_tensor, 0))
+        return segmented_image
 
 
 class VotingAssemblySegmenter(AnalysisSegmenter):
