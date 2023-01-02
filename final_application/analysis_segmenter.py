@@ -103,11 +103,16 @@ class AnalysisSegmenter:
 
         return tuple(patches)
 
-    def crop_and_batch_patches(self, input_image: ImageClass) -> Iterator[dict]:
-        transform_list = [
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-        ]
+    def crop_and_batch_patches(self, input_image: ImageClass, normalize:bool = True) -> Iterator[dict]:
+        if normalize:
+            transform_list = [
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ]
+        else:
+            transform_list = [
+                transforms.ToTensor()
+            ]
         transform_list = transforms.Compose(transform_list)
 
         bboxes_for_patches = self.calculate_bboxes_for_patches(*input_image.size)
@@ -143,17 +148,14 @@ class AnalysisSegmenter:
         assembled_predictions = torch.full((max_height, max_width, num_classes), float("-inf"), device=self.device)
 
         for patch in self.progress_bar(patches, desc="Merging patches...", leave=False):
-            reordered_patch = patch["prediction"].permute(1, 2, 0)
+            reordered_patch = torch.squeeze(patch["prediction"]).permute(1, 2, 0)
             x_start, y_start, x_end, y_end = patch["bbox"]
             x_end = min(x_end, max_width)
             y_end = min(y_end, max_height)
             window_height = y_end - y_start
             window_width = x_end - x_start
-
-            assembled_window = assembled_predictions[y_start:y_end, x_start:x_end, :]
             patch_without_padding = reordered_patch[:window_height, :window_width, :]
-            max_values = torch.maximum(assembled_window, patch_without_padding)
-            assembled_predictions[y_start:y_end, x_start:x_end, :] = max_values
+            assembled_predictions[y_start:y_end, x_start:x_end, :] = patch_without_padding
 
         return assembled_predictions.permute(2, 0, 1)  # permute so that the shape matches the original network output
 
@@ -186,31 +188,3 @@ class AnalysisSegmenter:
                                                         show_confidence_in_segmentation=self.show_confidence_in_segmentation)
         segmented_image = transforms.ToPILImage()(torch.squeeze(full_img_tensor, 0))
         return segmented_image
-
-
-class VotingAssemblySegmenter(AnalysisSegmenter):
-
-    def assemble_predictions(self, patches: List[dict], output_size: Tuple) -> torch.Tensor:
-        # dimensions are height, width, class for easier access
-        num_classes = self.network.num_classes
-        max_width = output_size[0]
-        max_height = output_size[1]
-        summed_confidences = torch.zeros((num_classes, max_height, max_width), device=self.device)
-
-        for patch in self.progress_bar(patches, desc="Merging patches...", leave=False):
-            x_start, y_start, x_end, y_end = patch["bbox"]
-            x_start = max(x_start, 0)
-            y_start = max(y_start, 0)
-            x_end = min(x_end, max_width)
-            y_end = min(y_end, max_height)
-            window_height = y_end - y_start
-            window_width = x_end - x_start
-
-            summed_confidences[:, y_start:y_end, x_start:x_end] += patch["prediction"][:, :window_height, :window_width]
-
-        # Normalize votes to range [0, 1]
-        predicted_class_confidences = summed_confidences / torch.unsqueeze(summed_confidences.sum(dim=0), dim=0)
-        # If all confidences are 0, division will lead to nan. This is likely due to low confidences that were removed
-        # during postprocessing
-        predicted_class_confidences = torch.nan_to_num(predicted_class_confidences)
-        return predicted_class_confidences

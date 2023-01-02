@@ -1,12 +1,14 @@
+import torch
 import yaml
 from pathlib import Path
 from PIL import Image
 import argparse
-from analysis_segmenter import VotingAssemblySegmenter
+from analysis_segmenter import AnalysisSegmenter
 from typing import Union
 from tqdm import tqdm
-from torchvision.utils import save_image
-import pickle
+from torchvision import transforms
+from models.LBAMModel import LBAMModel
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--input-dir', type=Path, help='the directory of the images you want to remove the handwriting from')
@@ -20,6 +22,32 @@ def is_image(file_name: Union[str, Path]) -> bool:
     return file_name.suffix.lower() in ['.png', '.jpeg', '.jpg', '.svg']
 
 
+def inpaint_patch(segmentation: Image, ground_truth: torch.Tensor, ) -> torch.Tensor:
+    to_tensor = transforms.ToTensor()
+    segmentation_tensor = to_tensor(segmentation).cuda()
+    mask = segmentation_tensor[0]
+    ones = mask >= 0.5
+    zeros = mask < 0.5
+    mask.masked_fill_(ones, 1.0)
+    mask.masked_fill_(zeros, 0.0)
+    mask = 1 - mask.repeat(3, 1, 1)
+    sizes = ground_truth.size()
+    image = ground_truth * mask
+    inputImage = torch.cat((image, mask[0].view(1, sizes[1], sizes[2])), 0)
+    inputImage = inputImage.view(1, 4, sizes[1], sizes[2])
+    mask = mask.view(1, sizes[0], sizes[1], sizes[2])
+
+    netG = LBAMModel(4, 3)
+    netG.load_state_dict(torch.load('weights/inpainting.pth'))
+    for param in netG.parameters():
+        param.requires_grad = False
+    netG.eval()
+    netG = netG.cuda()
+    output = netG(inputImage, mask)
+    output = output * (1 - mask) + inputImage[:, 0:3, :, :] * mask
+    return output
+
+
 config_file = Path('application_config.yaml')
 with config_file.open() as f:
     model_config = yaml.safe_load(f)
@@ -27,7 +55,7 @@ with config_file.open() as f:
 hyperparam_config = {'patch_overlap': model_config['patch_overlap'], 'min_confidence': model_config['min_confidence'],
                      'min_contour_area': model_config['min_contour_area']}
 
-segmenter = VotingAssemblySegmenter(
+segmenter = AnalysisSegmenter(
         model_config["checkpoint"],
         device="cuda",
         class_to_color_map=Path('/workspace/final_application/synthesis_in_style_lightning/stylegan_code_finder/handwriting_colors.json'),
@@ -37,31 +65,23 @@ segmenter = VotingAssemblySegmenter(
         show_confidence_in_segmentation=False
     )
 
-segmentation_output = Path(args.output_dir, 'segmentation_output')
-segmentation_output.mkdir(parents=True, exist_ok=True)
-ground_truth = Path(args.output_dir, 'ground_truth')
-ground_truth.mkdir(parents=True, exist_ok=True)
-
 image_paths = [f for f in args.input_dir.rglob("*") if is_image(f)]
 assert len(image_paths) > 0, "There are no images in the given directory."
 segmenter.set_hyperparams(hyperparam_config)
-all_patch_paths = []
 
-for i, image_path in enumerate(tqdm(image_paths, desc="Segmenting images...", leave=False)):
+for i, image_path in enumerate(tqdm(image_paths, desc="Segmenting and inpainting images...", leave=False)):
     original_image = Image.open(image_path)
     image = original_image.convert("L")
     predicted_patches = segmenter.segment_image(image)
-    for patch in predicted_patches:
-        patch_path = Path(segmentation_output,
-                          f'{image_path.stem}{patch["bbox"].left:05d}{patch["bbox"].right:05d}{patch["bbox"].top:05d}{patch["bbox"].bottom:05d}.jpg')
-        ground_truth_path = Path(ground_truth,
-                                 f'{image_path.stem}{patch["bbox"].left:05d}{patch["bbox"].right:05d}{patch["bbox"].top:05d}{patch["bbox"].bottom:05d}.jpg')
-        all_patch_paths.append({'path': patch_path, 'ground_truth_path': ground_truth_path, 'bbox': patch['bbox'],
-                                'image_size': image.size, 'image_name': image_path.stem})
-
-        segmenter.prediction_to_color_image(patch['prediction']).save(patch_path)
-        save_image(patch['ground_truth'], ground_truth_path)
-pickle_path = '/adrian.buchwald/tmp_file'
-
-with open(pickle_path, 'wb') as fp:
-    pickle.dump(all_patch_paths, fp)
+    original_batches = segmenter.crop_and_batch_patches(original_image, False)
+    original_patches = []
+    for original_batch in original_batches:
+        for original_patch in original_batch['images']:
+            original_patches.append(original_patch)
+    for patch_counter, (patch, original_patch) in enumerate(zip(predicted_patches, original_patches)):
+        color_prediction = segmenter.prediction_to_color_image(patch['prediction'])
+        patch['ground_truth'] = original_patch['images']
+        inpainted_image = inpaint_patch(color_prediction, patch['ground_truth'])
+        predicted_patches[patch_counter]['prediction'] = inpainted_image
+    assembled_image = segmenter.assemble_predictions(predicted_patches, image.size)
+    transforms.ToPILImage()(assembled_image).save(Path(args.output_dir, Path(image_path).name))
