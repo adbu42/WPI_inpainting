@@ -7,7 +7,6 @@ from analysis_segmenter import AnalysisSegmenter
 from typing import Union
 from tqdm import tqdm
 from torchvision import transforms
-from models.LBAMModel import LBAMModel
 import torch.nn as nn
 import copy
 
@@ -37,18 +36,14 @@ def inpaint_patch(segmentation: Image, ground_truth: torch.Tensor, ) -> torch.Te
     mask = 1 - mask
     sizes = ground_truth.size()
     image = ground_truth * mask
-    inputImage = torch.cat((image, mask[0].view(1, sizes[1], sizes[2])), 0)
+    inputImage = torch.cat((image, mask[0].view(1, sizes[1], sizes[2])), 0).cuda()
     inputImage = inputImage.view(1, 4, sizes[1], sizes[2])
     mask = mask.view(1, sizes[0], sizes[1], sizes[2])
-
-    netG = LBAMModel(4, 3)
-    netG.load_state_dict(torch.load('weights/inpainting.pth'))
-    for param in netG.parameters():
-        param.requires_grad = False
-    netG.eval()
-    netG = netG.cuda()
-    output = netG(inputImage, mask)
-    output = output * (1 - mask) + inputImage[:, 0:3, :, :] * mask
+    image_mean = torch.mean(ground_truth, dim=[1, 2])
+    output = torch.full((3, 256, 256), image_mean[0])
+    output[1] = torch.full((256, 256), image_mean[1])
+    output[2] = torch.full((256, 256), image_mean[2])
+    output = output.cuda() * (1 - mask) + inputImage[:, 0:3, :, :] * mask
     return output, mask
 
 
