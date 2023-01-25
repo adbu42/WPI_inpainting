@@ -1,4 +1,4 @@
 [submodule "final_application/synthesis-in-style-lightning"]
-	path = final_application/synthesis-in-style-lightning
+	path = final_application/synthesis_in_style_lightning
 	url = https://github.com/adbu42/synthesis-in-style-lightning.git
 	branch = training_loop_to_lighning
