@@ -86,7 +86,6 @@ class InpaintingAnalysisSegmenter(AnalysisSegmenter):
             image.thumbnail((self.max_image_size, self.max_image_size))
 
         patches = self.crop_and_batch_patches(image)
-        with torch.no_grad():
-            predicted_patches = self.predict_patches(patches)
+        predicted_patches = self.predict_patches(patches)
 
         return predicted_patches

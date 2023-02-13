@@ -1,10 +1,13 @@
 # Annotation segmentation and removal 
+![image](successful_removal_comparison.png)
 
 Removes the handwriting detected by [Synthesis in Style](https://github.com/hendraet/synthesis-in-style) by using the [LBAM inpainting model](https://github.com/Vious/LBAM_Pytorch).
 
 ## Setup
 
-Make sure you have the synthesis-in-style lightning files in /final_application/synthesis_in_style_lightning before installing it locally.
+Make sure you have the synthesis-in-style lightning files in ```/final_application/synthesis_in_style_lightning``` 
+before installing it locally via git submodule.
+They can be copied from [here](https://github.com/adbu42/synthesis-in-style-lightning/tree/training_loop_to_lighning).
 The requirements can be installed via pip and the requirements.txt file. 
 Alternatively, you can use the docker image "docker://hendraet/synthesis-in-style:cuda-11.1".
 Weights can be downloaded from [here](https://drive.google.com/file/d/1O_bImshs5KXloh2Nd05TzmiQIqIlJw0i/view?usp=sharing) and [here](https://drive.google.com/file/d/19daBLbYazgU6q2EaEdHudJqrkWSWYlqf/view?usp=sharing).
@@ -30,7 +33,9 @@ remove_handwriting.py --input-dir "directory of the documents with handwriting" 
 
 ### get_pnsr_and_ssim.py 
 
-Outputs the pnsr, ssim, mse and l1-loss between two direcories with documents.
+Outputs the pnsr, ssim, mse and l1-loss between two direcories with documents. Both directories should contain images. 
+The script only compares images which have the same name in both directories. 
+The ground truth and the removed-handwriting image should both have the same resolution and size.
 Usage: 
 ```
 get_pnsr_and_ssim.py --ground-truth "directory with the ground-truth images" --removed-handwriting "directory with the inpainted images"

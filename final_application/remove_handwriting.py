@@ -20,7 +20,7 @@ def is_image(file_name: Union[str, Path]) -> bool:
     return file_name.suffix.lower() in ['.png', '.jpeg', '.jpg', '.svg']
 
 
-def inpaint_patch(segmentation: Image, ground_truth: torch.Tensor, image_mean: bool) -> torch.Tensor:
+def inpaint_patch(segmentation: Image, ground_truth: torch.Tensor, image_mean: bool, inpainting_model: nn.Module) -> torch.Tensor:
     # A kernel size of 7 is big enough to cover most handwriting.
     # A padding of 3 makes sure that the image size is not different.
     max_pooling = nn.MaxPool2d(kernel_size=7, stride=1, padding=3)
@@ -47,13 +47,11 @@ def inpaint_patch(segmentation: Image, ground_truth: torch.Tensor, image_mean: b
         output = image_mean.unsqueeze(1).unsqueeze(2).repeat(1, 256, 256)
     else:
         # inpaint with the LBAM-model
-        netG = LBAMModel(4, 3)
-        netG.load_state_dict(torch.load('weights/inpainting.pth'))
-        for param in netG.parameters():
+        for param in inpainting_model.parameters():
             param.requires_grad = False
-        netG.eval()
-        netG = netG.cuda()
-        output = netG(input_image, mask)
+        inpainting_model.eval()
+        inpainting_model = inpainting_model.cuda()
+        output = inpainting_model(input_image, mask)
 
     # fill the masked parts of the image with the inpainting model, while the unmasked parts stay the same
     output = output * (1 - mask) + input_image[:, 0:3, :, :] * mask
@@ -79,6 +77,8 @@ def main(args: argparse.Namespace):
         print_progress=False,
         show_confidence_in_segmentation=False
     )
+    net_g = LBAMModel(4, 3)
+    net_g.load_state_dict(torch.load('weights/inpainting.pth'))
 
     image_paths = [f for f in args.input_dir.rglob("*") if is_image(f)]
     assert len(image_paths) > 0, "There are no images in the given directory."
@@ -97,17 +97,17 @@ def main(args: argparse.Namespace):
         for patch_counter, (patch, original_patch) in enumerate(zip(predicted_patches, original_patches)):
             color_prediction = segmenter.prediction_to_color_image(patch['prediction'])
             patch['ground_truth'] = original_patch
-            inpainted_image, mask = inpaint_patch(color_prediction, patch['ground_truth'], args.image_mean_method)
+            inpainted_image, mask = inpaint_patch(color_prediction, patch['ground_truth'], args.image_mean_method, net_g)
             mask_patches[patch_counter]['prediction'] = mask
             predicted_patches[patch_counter]['prediction'] = inpainted_image
         assembled_image = segmenter.assemble_predictions(predicted_patches, image.size)
         assembled_mask = segmenter.assemble_predictions(mask_patches, image.size)
-        F.to_pil_image(assembled_image).save(Path(args.output_dir, Path(image_path).name))
-        F.to_pil_image(assembled_mask).save(Path(args.output_dir, f'{Path(image_path).name}_mask.jpg'))
+        F.to_pil_image(assembled_image).save(args.output_dir/image_path.name)
+        F.to_pil_image(assembled_mask).save(args.output_dir/f'{image_path.name}_mask.jpg')
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description='Removes handwriting from documents.')
     parser.add_argument('--input-dir', type=Path,
                         help='the directory of the images you want to remove the handwriting from')
     parser.add_argument('--output-dir', type=Path, help='the directory of the images without handwriting')
